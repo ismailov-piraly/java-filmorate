@@ -1,9 +1,12 @@
 package ru.yandex.practicum.filmorate.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import ru.yandex.practicum.filmorate.dto.UserDto;
 import ru.yandex.practicum.filmorate.exception.ConditionsNotMetException;
 import ru.yandex.practicum.filmorate.exception.NotFoundException;
+import ru.yandex.practicum.filmorate.mapper.UserMapper;
 import ru.yandex.practicum.filmorate.model.User;
 import ru.yandex.practicum.filmorate.storage.user.UserStorage;
 
@@ -15,12 +18,19 @@ import java.util.List;
 public class UserService {
 
     private final UserStorage userStorage;
+    private final UserMapper userMapper;
 
-    public UserService(UserStorage userStorage) {
+    public UserService(
+            @Qualifier("userDbStorage") UserStorage userStorage,
+            UserMapper userMapper) {
+
         this.userStorage = userStorage;
+        this.userMapper = userMapper;
     }
 
-    public User create(User user) {
+    public UserDto create(UserDto userDto) {
+
+        User user = userMapper.toEntity(userDto);
 
         validateUser(user);
 
@@ -32,20 +42,18 @@ public class UserService {
 
         log.info("Добавлен пользователь: {}", createdUser);
 
-        return createdUser;
+        return userMapper.toDto(createdUser);
     }
 
-    public User update(User user) {
+    public UserDto update(UserDto userDto) {
+
+        User user = userMapper.toEntity(userDto);
 
         if (user.getId() == null) {
-            log.warn("Не указан id пользователя");
             throw new ConditionsNotMetException("Id должен быть указан");
         }
 
-        if (userStorage.findById(user.getId()) == null) {
-            log.warn("Пользователь с id={} не найден", user.getId());
-            throw new NotFoundException("Пользователь не найден");
-        }
+        getUserOrThrow(user.getId());
 
         validateUser(user);
 
@@ -57,22 +65,18 @@ public class UserService {
 
         log.info("Обновлен пользователь: {}", updatedUser);
 
-        return updatedUser;
+        return userMapper.toDto(updatedUser);
     }
 
-    public List<User> getUsers() {
-        return userStorage.findAll();
+    public List<UserDto> getUsers() {
+        return userStorage.findAll()
+                .stream()
+                .map(userMapper::toDto)
+                .toList();
     }
 
-    public User getUserById(Long id) {
-
-        User user = userStorage.findById(id);
-
-        if (user == null) {
-            throw new NotFoundException("Пользователь не найден");
-        }
-
-        return user;
+    public UserDto getUserById(Long id) {
+        return userMapper.toDto(getUserOrThrow(id));
     }
 
     private void validateUser(User user) {
@@ -83,7 +87,9 @@ public class UserService {
 
             log.warn("Некорректный email");
 
-            throw new ConditionsNotMetException("Электронная почта указана неверно");
+            throw new ConditionsNotMetException(
+                    "Электронная почта указана неверно"
+            );
         }
 
         if (user.getLogin() == null
@@ -92,58 +98,59 @@ public class UserService {
 
             log.warn("Некорректный логин");
 
-            throw new ConditionsNotMetException("Логин не может быть пустым и содержать пробелы");
+            throw new ConditionsNotMetException(
+                    "Логин не может быть пустым и содержать пробелы"
+            );
         }
 
         if (user.getBirthday().isAfter(LocalDate.now())) {
 
             log.warn("Дата рождения в будущем");
 
-            throw new ConditionsNotMetException("Дата рождения не может быть в будущем");
+            throw new ConditionsNotMetException(
+                    "Дата рождения не может быть в будущем"
+            );
         }
     }
 
+    private User getUserOrThrow(Long userId) {
+        return userStorage.findUserById(userId)
+                .orElseThrow(() ->
+                        new NotFoundException(
+                                "Пользователь не найден: " + userId
+                        ));
+    }
+
     public void addFriend(Long userId, Long friendId) {
+        getUserOrThrow(userId);
+        getUserOrThrow(friendId);
 
-        User user = getUserById(userId);
-        User friend = getUserById(friendId);
-
-        user.getFriends().add(friendId);
-        friend.getFriends().add(userId);
-
-        log.info("Пользователь {} добавил в друзья {}", userId, friendId);
+        userStorage.addFriend(userId, friendId);
     }
 
     public void removeFriend(Long userId, Long friendId) {
+        getUserOrThrow(userId);
+        getUserOrThrow(friendId);
 
-        User user = getUserById(userId);
-        User friend = getUserById(friendId);
-
-        user.getFriends().remove(friendId);
-        friend.getFriends().remove(userId);
-
-        log.info("Пользователь {} удалил из друзей {}", userId, friendId);
+        userStorage.removeFriend(userId, friendId);
     }
 
-    public List<User> getFriends(Long userId) {
+    public List<UserDto> getFriends(Long userId) {
+        getUserOrThrow(userId);
 
-        User user = getUserById(userId);
-
-        return user.getFriends()
+        return userStorage.findFriends(userId)
                 .stream()
-                .map(userStorage::findById)
+                .map(userMapper::toDto)
                 .toList();
     }
 
-    public List<User> getCommonFriends(Long userId, Long otherId) {
+    public List<UserDto> getCommonFriends(Long userId, Long otherId) {
+        getUserOrThrow(userId);
+        getUserOrThrow(otherId);
 
-        User firstUser = getUserById(userId);
-        User secondUser = getUserById(otherId);
-
-        return firstUser.getFriends()
+        return userStorage.findCommonFriends(userId, otherId)
                 .stream()
-                .filter(secondUser.getFriends()::contains)
-                .map(userStorage::findById)
+                .map(userMapper::toDto)
                 .toList();
     }
 }
